@@ -37,6 +37,7 @@
 #import "Appirater.h"
 #import <SystemConfiguration/SCNetworkReachability.h>
 #include <netinet/in.h>
+#import  <QuartzCore/QuartzCore.h>
 
 #if ! __has_feature(objc_arc)
 #warning This file must be compiled with ARC. Use -fobjc-arc flag (or convert project to ARC).
@@ -58,8 +59,10 @@ static NSString *_appId;
 static double _daysUntilPrompt = 30;
 static NSInteger _usesUntilPrompt = 20;
 static NSInteger _significantEventsUntilPrompt = -1;
-static double _timeBeforeReminding = 1;
+static int _timeBeforeReminding = 1;
 static BOOL _debug = NO;
+static BOOL _useXIB = NO;
+static NSString *_xibName;
 #if __IPHONE_OS_VERSION_MIN_REQUIRED < __IPHONE_5_0
 	static id<AppiraterDelegate> _delegate;
 #else
@@ -76,6 +79,7 @@ static BOOL _alwaysUseMainBundle = NO;
 @property (nonatomic, copy) NSString *alertCancelTitle;
 @property (nonatomic, copy) NSString *alertRateTitle;
 @property (nonatomic, copy) NSString *alertRateLaterTitle;
+@property (nonatomic, strong) UIView *alert;
 - (BOOL)connectedToNetwork;
 + (Appirater*)sharedInstance;
 - (void)showPromptWithChecks:(BOOL)withChecks
@@ -90,6 +94,11 @@ static BOOL _alwaysUseMainBundle = NO;
 @implementation Appirater 
 
 @synthesize ratingAlert;
+
++ (void)setUseCustomXibAsAlert:(NSString *)xibName {
+    _useXIB = YES;
+    _xibName = xibName;
+}
 
 + (void) setAppId:(NSString *)appId {
     _appId = appId;
@@ -268,27 +277,38 @@ static BOOL _alwaysUseMainBundle = NO;
 }
 
 - (void)showRatingAlert:(BOOL)displayRateLaterButton {
-  UIAlertView *alertView = nil;
-  if (displayRateLaterButton) {
-  	alertView = [[UIAlertView alloc] initWithTitle:self.alertTitle
-                                           message:self.alertMessage
-                                          delegate:self
-                                 cancelButtonTitle:self.alertCancelTitle
-                                 otherButtonTitles:self.alertRateTitle, self.alertRateLaterTitle, nil];
-  } else {
-  	alertView = [[UIAlertView alloc] initWithTitle:self.alertTitle
-                                           message:self.alertMessage
-                                          delegate:self
-                                 cancelButtonTitle:self.alertCancelTitle
-                                 otherButtonTitles:self.alertRateTitle, nil];
-  }
-
-	self.ratingAlert = alertView;
-    [alertView show];
-
-    id <AppiraterDelegate> delegate = _delegate;
-    if (delegate && [delegate respondsToSelector:@selector(appiraterDidDisplayAlert:)]) {
-             [delegate appiraterDidDisplayAlert:self];
+    if (_useXIB) {
+        NSArray *rateAlertXib = [[NSBundle mainBundle] loadNibNamed:_xibName owner:self options:nil];
+        self.alert = [rateAlertXib firstObject];
+        self.alert.frame = [[UIApplication sharedApplication] keyWindow].frame;
+        [[[UIApplication sharedApplication] keyWindow] addSubview:self.alert];
+        id <AppiraterDelegate> delegate = _delegate;
+        if (delegate && [delegate respondsToSelector:@selector(appiraterDidDisplayAlert:)]) {
+            [delegate appiraterDidDisplayAlert:self];
+        }
+    } else {
+        UIAlertView *alertView = nil;
+        if (displayRateLaterButton) {
+            alertView = [[UIAlertView alloc] initWithTitle:self.alertTitle
+                                                   message:self.alertMessage
+                                                  delegate:self
+                                         cancelButtonTitle:self.alertCancelTitle
+                                         otherButtonTitles:self.alertRateTitle, self.alertRateLaterTitle, nil];
+        } else {
+            alertView = [[UIAlertView alloc] initWithTitle:self.alertTitle
+                                                   message:self.alertMessage
+                                                  delegate:self
+                                         cancelButtonTitle:self.alertCancelTitle
+                                         otherButtonTitles:self.alertRateTitle, nil];
+        }
+        
+        self.ratingAlert = alertView;
+        [alertView show];
+        
+        id <AppiraterDelegate> delegate = _delegate;
+        if (delegate && [delegate respondsToSelector:@selector(appiraterDidDisplayAlert:)]) {
+            [delegate appiraterDidDisplayAlert:self];
+        }
     }
 }
 
@@ -327,11 +347,8 @@ static BOOL _alwaysUseMainBundle = NO;
 	if ([self userHasRatedCurrentVersion])
 		return NO;
 	
-	// if the user wanted to be reminded later, has enough time passed?
-	NSDate *reminderRequestDate = [NSDate dateWithTimeIntervalSince1970:[userDefaults doubleForKey:kAppiraterReminderRequestDate]];
-	NSTimeInterval timeSinceReminderRequest = [[NSDate date] timeIntervalSinceDate:reminderRequestDate];
-	NSTimeInterval timeUntilReminder = 60 * 60 * 24 * _timeBeforeReminding;
-	if (timeSinceReminderRequest < timeUntilReminder)
+	BOOL timesBeforRemind = (useCount % _timeBeforeReminding) != 0;
+	if (timesBeforRemind)
 		return NO;
 	
 	return YES;
@@ -552,20 +569,14 @@ static BOOL _alwaysUseMainBundle = NO;
         }
     }
     
-    return [Appirater iterateSubViewsForViewController:window]; // iOS 8+ deep traverse
-}
-
-+ (id)iterateSubViewsForViewController:(UIView *) parentView {
-    for (UIView *subView in [parentView subviews]) {
+    for (UIView *subView in [window subviews])
+    {
         UIResponder *responder = [subView nextResponder];
         if([responder isKindOfClass:[UIViewController class]]) {
             return [self topMostViewController: (UIViewController *) responder];
         }
-        id found = [Appirater iterateSubViewsForViewController:subView];
-        if( nil != found) {
-            return found;
-        }
     }
+    
     return nil;
 }
 
@@ -635,43 +646,62 @@ static BOOL _alwaysUseMainBundle = NO;
 }
 
 - (void)alertView:(UIAlertView *)alertView didDismissWithButtonIndex:(NSInteger)buttonIndex {
-	NSUserDefaults *userDefaults = [NSUserDefaults standardUserDefaults];
-    
-    id <AppiraterDelegate> delegate = _delegate;
+	
 	
 	switch (buttonIndex) {
 		case 0:
 		{
 			// they don't want to rate it
-			[userDefaults setBool:YES forKey:kAppiraterDeclinedToRate];
-			[userDefaults synchronize];
-			if(delegate && [delegate respondsToSelector:@selector(appiraterDidDeclineToRate:)]){
-				[delegate appiraterDidDeclineToRate:self];
-			}
+            [self dontRateApp:nil];
 			break;
 		}
 		case 1:
 		{
 			// they want to rate it
-			[Appirater rateApp];
-			if(delegate&& [delegate respondsToSelector:@selector(appiraterDidOptToRate:)]){
-				[delegate appiraterDidOptToRate:self];
-			}
+            [self rateThisApp:nil];
 			break;
 		}
 		case 2:
 			// remind them later
-			[userDefaults setDouble:[[NSDate date] timeIntervalSince1970] forKey:kAppiraterReminderRequestDate];
-			[userDefaults synchronize];
-			if(delegate && [delegate respondsToSelector:@selector(appiraterDidOptToRemindLater:)]){
-				[delegate appiraterDidOptToRemindLater:self];
-			}
+            [self remindMeToRateApp:nil];
 			break;
 		default:
 			break;
 	}
 }
+- (IBAction)rateThisApp:(id)sender {
+    [self.alert removeFromSuperview];
+    
+    id <AppiraterDelegate> delegate = _delegate;
+    [Appirater rateApp];
+    
+    if(delegate&& [delegate respondsToSelector:@selector(appiraterDidOptToRate:)]){
+        [delegate appiraterDidOptToRate:self];
+    }
+}
 
+- (IBAction)dontRateApp:(id)sender {
+    [self.alert removeFromSuperview];
+    
+    id <AppiraterDelegate> delegate = _delegate;
+    NSUserDefaults *userDefaults = [NSUserDefaults standardUserDefaults];
+    [userDefaults setBool:YES forKey:kAppiraterDeclinedToRate];
+    [userDefaults synchronize];
+    if(delegate && [delegate respondsToSelector:@selector(appiraterDidDeclineToRate:)]){
+        [delegate appiraterDidDeclineToRate:self];
+    }
+}
+- (IBAction)remindMeToRateApp:(id)sender {
+    [self.alert removeFromSuperview];
+    
+    NSUserDefaults *userDefaults = [NSUserDefaults standardUserDefaults];
+    id <AppiraterDelegate> delegate = _delegate;
+    [userDefaults setDouble:[[NSDate date] timeIntervalSince1970] forKey:kAppiraterReminderRequestDate];
+    [userDefaults synchronize];
+    if(delegate && [delegate respondsToSelector:@selector(appiraterDidOptToRemindLater:)]){
+        [delegate appiraterDidOptToRemindLater:self];
+    }
+}
 //Delegate call from the StoreKit view.
 - (void)productViewControllerDidFinish:(SKStoreProductViewController *)viewController {
 	[Appirater closeModal];

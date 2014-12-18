@@ -111,6 +111,7 @@ extern NSString *const kAppiraterReminderRequestDate;
  can also be triggered by appEnteredForeground: and userDidSignificantEvent:
  (as long as you pass YES for canPromptForRating in those methods).
  */
++ (void)setUseCustomXibAsAlert:(NSString *)xibName;
 + (void)appLaunched:(BOOL)canPromptForRating;
 
 /*!
@@ -176,23 +177,14 @@ extern NSString *const kAppiraterReminderRequestDate;
  whether to rate the app.
  */
 + (void)rateApp;
+@property (weak, nonatomic) IBOutlet UIButton   *rateButton;
+@property (weak, nonatomic) IBOutlet UIButton   *remindMeButton;
+@property (weak, nonatomic) IBOutlet UIView     *alertContainer;
 
 /*!
  Tells Appirater to immediately close any open rating modals (e.g. StoreKit rating VCs).
 */
 + (void)closeModal;
-
-/*!
- Asks Appirater if the user has declined to rate;
-*/
-- (BOOL)userHasDeclinedToRate;
-
-/*!
- Asks Appirater if the user has rated the current version.
- Note that this is not a guarantee that the user has actually rated the app in the 
- app store, but they've just clicked the rate button on the Appirater dialog. 
-*/
-- (BOOL)userHasRatedCurrentVersion;
 
 @end
 
@@ -284,7 +276,7 @@ extern NSString *const kAppiraterReminderRequestDate;
 + (void)setUsesAnimation:(BOOL)animation;
 
 /*!
- If set to YES, Appirater will open App Store link (instead of SKStoreProductViewController on iOS 6). Default YES.
+ If set to YES, Appirater will open App Store link (instead of SKStoreProductViewController on iOS 6). Default NO.
  */
 + (void)setOpenInAppStore:(BOOL)openInAppStore;
 
